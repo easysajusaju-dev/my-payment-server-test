@@ -1,133 +1,69 @@
-// apps/api/pay/callback/route.js
+// apps/api/pay/callback/route.js  (Next.js App Router)
+import crypto from "crypto";
 
 export async function POST(req) {
-  // 1) 인증 콜백(FormData) 파싱
-  const form = await req.formData();
-  const authResultCode = form.get("authResultCode"); // "0000"이면 인증성공
-  const authToken      = form.get("authToken");
-  const tid            = form.get("tid");
-  const amountFromForm = form.get("amount");     // 문자열일 수 있음
-  const goodsNameFromForm = form.get("goodsName"); // 종종 비어 올 수 있음
-  const orderIdFromForm   = form.get("orderId");   // 너의 오더ID
-  const secret = process.env.NICE_SECRET_BASE64;
-
-  // [로그] 인증 콜백 원문
   try {
-    console.log("[NICE AUTH CALLBACK] form", {
-      authResultCode, tid, amountFromForm, goodsNameFromForm, orderIdFromForm
-    });
-  } catch {}
+    // NICE에서 보내주는 form-data 받기
+    const form = await req.formData();
+    const authResultCode = form.get("authResultCode");
+    const tid      = form.get("tid");
+    const amount   = form.get("amount");
+    const orderId  = form.get("orderId");
+    // goodsName은 폼에서 누락될 수 있으니 "승인 응답"에서 다시 받는다.
 
-  // 2) 인증 실패/취소면 즉시 실패 페이지 + 시트에 취소 기록
-  if (authResultCode !== "0000") {
-    try {
-      await fetch(
-        "https://script.google.com/macros/s/AKfycbzhi4556hgBKctN3KVBlPdkl1vFD3oG7Wv7Hdm6pk16VGG8OF6q6EaPT8t_5WTX87Jb/exec",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({
-            mode: "updatePayment",
-            orderId: orderIdFromForm || "",
-            payStatus: "결제취소",
-          }),
-        }
-      );
-      console.log("❎ Logger.gs 결제취소 기록 완료");
-    } catch (err) {
-      console.error("❌ Logger.gs 결제취소 기록 실패:", err);
+    const secret   = process.env.NICE_SECRET_BASE64; // e.g. base64(clientId:secretKey)
+    const GAS_TOKEN_URL = process.env.GAS_TOKEN_URL;
+// 🔴 여기에 1단계에서 만든 웹앱 URL 넣기
+
+    // 인증 실패 시 바로 실패 페이지
+    if (authResultCode !== "0000") {
+      return Response.redirect("https://easysaju-test.vercel.app/payment-fail.html");
     }
 
-    // 실패 페이지는 커스텀 도메인으로 고정하는 게 UX상 깔끔
-    return Response.redirect("https://www.easysaju.kr/payment-fail.html");
-  }
-
-  // 3) 승인 API 호출 (여기 응답에 goodsName이 안정적으로 포함됨)
-  let result;
-  try {
+    // 1) NICE 승인 API
     const approve = await fetch(`https://api.nicepay.co.kr/v1/payments/${tid}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Basic ${secret}`,
+        Authorization: `Basic ${secret}`,
       },
-      body: JSON.stringify({ amount: Number(amountFromForm) || 0 }),
+      body: JSON.stringify({ amount }),
     });
 
-    result = await approve.json();
-    console.log("[NICE APPROVE RESULT]", result);
-  } catch (err) {
-    console.error("❌ NICE 승인 요청 실패:", err);
-    // 승인요청 자체가 실패해도 고객은 실패 페이지로 안내
-    return Response.redirect("https://www.easysaju.kr/payment-fail.html");
-  }
+    const result = await approve.json();
 
-  // 4) 승인 성공 처리
-  if (result && result.resultCode === "0000") {
-    // ✅ 상품명/주문번호/금액은 '승인 응답' 기준으로 확정
-    const resolvedGoodsName =
-      result.goodsName ??
-      result.GoodsName ??
-      result.goods_name ??
-      goodsNameFromForm ??
-      "이지사주 상담";
+    // 2) 승인 성공 시 토큰 저장 + 리다이렉트
+    if (result.resultCode === "0000") {
+      const token = crypto.randomBytes(12).toString("base64url");
 
-    const resolvedOrderId = result.orderId || orderIdFromForm || "";
-    const resolvedAmount  = typeof result.amount === "number"
-      ? result.amount
-      : Number(result.amount || amountFromForm || 0);
+      // ✅ 승인 응답에서 확정 값 사용(상품명/금액/영수증URL 등)
+      const payload = {
+        mode: "saveToken",
+        token,
+        orderId,
+        goodsName: result.goodsName || "상품명없음",
+        amount: result.amount || amount || 0,
+        payDate: result.paidAt || new Date().toISOString(),
+        payStatus: "결제완료",
+        receiptUrl: result.receiptUrl || "",
+      };
 
-    // (선택) 응답 서명 검증을 나중에 붙일 경우 대비하여 로그만 남김
-    // const approveSig = result.signature; // 필요시 Logger.gs에 남겨서 대조
+      // GAS 토큰 서버에 JSON으로 저장
+      await fetch(GAS_TOKEN_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-    // 4-1) 시트에 결제완료 기록
-    try {
-      await fetch(
-        "https://script.google.com/macros/s/AKfycbz_SRAMhhOT396196sgEzHeDMNk_oF7IL-M5BpAReKum04hVtkVYw0AwY71P4SyEdm-/exec",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({
-            mode: "updatePayment",
-            orderId: resolvedOrderId,
-            payStatus: "결제완료",
-          }),
-        }
-      );
-      console.log("✅ Logger.gs 결제완료 기록 성공");
-    } catch (err) {
-      console.error("❌ Logger.gs 결제완료 기록 실패:", err);
-      // 기록 실패해도 결제 자체는 성공이므로, 고객 리다이렉트는 진행
+      // thankyou로 토큰 전달
+      return Response.redirect(`https://easysaju-test.vercel.app/thankyou.html?token=${token}`);
+      // 테스트 도메인이면 위 URL을 https://easysaju-test.vercel.app/thankyou.html?token=... 로 교체
     }
 
-    // 4-2) 고객 Thank You 페이지로 이동 (커스텀 도메인 기준)
-    const redirectUrl =
-      `https://www.easysaju.kr/thankyou.html` +
-      `?oid=${encodeURIComponent(resolvedOrderId)}` +
-      `&product=${encodeURIComponent(resolvedGoodsName)}` +
-      `&price=${encodeURIComponent(resolvedAmount)}`;
-
-    return Response.redirect(redirectUrl);
-  }
-
-  // 5) 승인 응답이 실패인 경우 → 실패 기록 + 실패 페이지
-  try {
-    await fetch(
-      "https://script.google.com/macros/s/AKfycbz_SRAMhhOT396196sgEzHeDMNk_oF7IL-M5BpAReKum04hVtkVYw0AwY71P4SyEdm-/exec",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          mode: "updatePayment",
-          orderId: orderIdFromForm || "",
-          payStatus: "결제실패",
-        }),
-      }
-    );
-    console.log("⚠️ Logger.gs 결제실패 기록 완료");
+    // 승인 실패
+    return Response.redirect("https://easysaju-test.vercel.app/thankyou.html/payment-fail.html");
   } catch (err) {
-    console.error("❌ Logger.gs 결제실패 기록 실패:", err);
+    console.error("callback error:", err);
+    return Response.redirect("https://easysaju-test.vercel.app/payment-fail.html");
   }
-
-  return Response.redirect("https://easysaju-test.vercel.app/payment-fail.html");
 }
