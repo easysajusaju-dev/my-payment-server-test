@@ -8,7 +8,7 @@ export default async function handler(req, res) {
 
   try {
     const url = process.env.PRODUCTS_URL 
-      || 'https://script.google.com/macros/s/AKfycbwX6UPs_IaiyaHGMBdRrwUzoaAoe5EjM0JifNgw4K7DNPDX84QPfvwh16YAs0KhaRfx-g/exec';
+      || 'https://script.google.com/macros/s/AKfycbzhi4556hgBKctN3KVBlPdkl1vFD3oG7Wv7Hdm6pk16VGG8OF6q6EaPT8t_5WTX87Jb/exec';
 
     const r = await fetch(url, { method: 'GET', cache: 'no-store' });
     if (!r.ok) throw new Error(`Apps Script error: ${r.status}`);
