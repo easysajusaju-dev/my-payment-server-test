@@ -129,5 +129,5 @@ export async function POST(req) {
     console.error("❌ Logger.gs 결제실패 기록 실패:", err);
   }
 
-  return Response.redirect("https://www.easysaju.kr/payment-fail.html");
+  return Response.redirect("https://easysaju-test.vercel.app/payment-fail.html");
 }
