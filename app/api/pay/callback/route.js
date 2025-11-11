@@ -50,11 +50,7 @@ export async function POST(req) {
       };
 
       // 1️⃣ 시트에 기록
-      await fetch(GAS_TOKEN_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      
 
       // 2️⃣ 암호화 토큰 생성 (thankyou.html에서 복호화 가능)
       const thankyouToken = sign(payload);
